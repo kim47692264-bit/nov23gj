@@ -79,10 +79,13 @@ class PoseMatchProcessor(VideoProcessorBase):
       - 여러 사람의 얼굴 roll angle 계산
       - 타겟 각도와 비교해 사람별 유사도 계산
       - 사람별 유사도 바 표시
-      - 조건 만족시 자동 캡처 (최근 10장 저장, 캡처 사진에는 UI 없음)
+      - 조건 만족 시 자동 캡처 (최근 10장 저장, 캡처 사진에는 UI 없음)
     """
 
     def __init__(self):
+        # streamlit-webrtc 프레임 포맷 고정 (초록색 깨짐 방지)
+        self._frame_format = "bgr24"
+
         # 타겟 각도 & 조건
         self.ref_angle = None
         self.tolerance = 5.0          # 허용 각도 차
@@ -103,6 +106,7 @@ class PoseMatchProcessor(VideoProcessorBase):
         )
 
     def recv(self, frame):
+        # 프레임을 bgr24로 변환 (포맷 고정)
         img = frame.to_ndarray(format="bgr24")
 
         # 🔹 UI가 없는 원본 프레임 (캡처용)
@@ -363,18 +367,21 @@ def main():
         horizontal=True,
     )
 
+    # 해상도는 조금 낮게 (480x360) → 전송/디코딩 안정성 ↑
+    base_constraints = {
+        "width": {"ideal": 480},
+        "height": {"ideal": 360},
+        "frameRate": {"ideal": 15},
+    }
+
     if cam_mode == "전면":
         video_constraints = {
-            "width": {"ideal": 640},
-            "height": {"ideal": 480},
-            "frameRate": {"ideal": 15},
+            **base_constraints,
             "facingMode": {"ideal": "user"},
         }
     else:  # 후면
         video_constraints = {
-            "width": {"ideal": 640},
-            "height": {"ideal": 480},
-            "frameRate": {"ideal": 15},
+            **base_constraints,
             "facingMode": {"ideal": "environment"},
         }
 
@@ -388,6 +395,7 @@ def main():
         },
         video_processor_factory=PoseMatchProcessor,
         async_processing=True,
+        preferred_codec="VP8",  # 코덱을 VP8로 고정 (모바일에서 artifact 줄이기)
     )
 
     if webrtc_ctx.video_processor:

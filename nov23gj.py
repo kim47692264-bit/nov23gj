@@ -51,9 +51,8 @@ def get_face_roll_angle(img_bgr):
 
 
 def draw_angle_overlay(img_bgr, angle_deg, eye_pts, label=""):
+    """타겟 이미지 위에 눈 선 + 각도 텍스트 표시."""
     img = img_bgr.copy()
-    h, w, _ = img.shape
-
     if angle_deg is not None and eye_pts is not None:
         (re, le) = eye_pts
         cv2.line(img, re, le, (0, 255, 0), 2)
@@ -75,20 +74,29 @@ def draw_angle_overlay(img_bgr, angle_deg, eye_pts, label=""):
 
 
 class PoseMatchProcessor(VideoProcessorBase):
-    """웹캠 프레임을 받아서 타겟 각도와 비교 + 자동 캡처 + (여러 명) 유사도 바 표시"""
+    """
+    웹캠 프레임을 받아서:
+      - 여러 사람의 얼굴 roll angle 계산
+      - 타겟 각도와 비교해 사람별 유사도 계산
+      - 사람별 유사도 바 표시
+      - 조건 만족시 자동 캡처 (최근 10장 저장)
+    """
 
     def __init__(self):
+        # 타겟 각도 & 조건
         self.ref_angle = None
-        self.tolerance = 5.0
-        self.cooldown_sec = 3.0
+        self.tolerance = 5.0          # 허용 각도 차
+        self.cooldown_sec = 3.0       # 캡처 쿨다운
         self.last_capture_time = 0.0
 
-        # 여러 명 상태
-        # person_infos: [{"id":1, "angle":..., "sim":...}, ...]
+        # 현재 프레임 기준 사람별 정보
+        # [{"id":1, "angle":..., "sim":...}, ...]
         self.person_infos = []
 
+        # 자동 캡처된 이미지들
         self.captured_images = []
 
+        # FaceDetection은 한 번만 생성 (성능)
         self.face_detector = mp_face.FaceDetection(
             model_selection=0,
             min_detection_confidence=0.6
@@ -105,7 +113,7 @@ class PoseMatchProcessor(VideoProcessorBase):
         faces_for_capture = []
 
         if results and results.detections:
-            # 1차: 각 얼굴에 대해 각도/유사도/중심 x좌표 계산
+            # 1) 각 detection에 대해 각도/유사도/중심 x좌표 계산
             temp_list = []
             for det in results.detections:
                 keypoints = det.location_data.relative_keypoints
@@ -137,16 +145,16 @@ class PoseMatchProcessor(VideoProcessorBase):
                     }
                 )
 
-            # 왼쪽(작은 x)부터 정렬 → P1, P2, ...
+            # 2) 왼쪽에서 오른쪽 순으로 정렬 → P1, P2, ...
             temp_list.sort(key=lambda d: d["center_x"])
 
-            # 그리기 + 상태 저장
+            # 3) 그리기 + 상태 저장
             for idx, info in enumerate(temp_list, start=1):
                 det = info["det"]
                 angle_deg = info["angle"]
                 sim = info["sim"]
 
-                # Streamlit에 보여줄 상태
+                # Streamlit에 보여줄 데이터
                 self.person_infos.append(
                     {
                         "id": idx,
@@ -155,7 +163,7 @@ class PoseMatchProcessor(VideoProcessorBase):
                     }
                 )
 
-                # 눈 좌표 다시 계산
+                # 눈 좌표
                 keypoints = det.location_data.relative_keypoints
                 right_eye = keypoints[0]
                 left_eye = keypoints[1]
@@ -164,7 +172,7 @@ class PoseMatchProcessor(VideoProcessorBase):
                 right_eye_pt = (int(x1), int(y1))
                 left_eye_pt = (int(x2), int(y2))
 
-                # 눈 사이 선
+                # 눈 선
                 cv2.line(img, right_eye_pt, left_eye_pt, (0, 255, 0), 2)
 
                 # 얼굴 박스
@@ -179,7 +187,7 @@ class PoseMatchProcessor(VideoProcessorBase):
                 bh = max(0, bh)
                 cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)
 
-                # 상단 텍스트 (사람 번호 + 각도 + 유사도)
+                # 사람 번호 + 각도 + 유사도 텍스트
                 if sim is not None:
                     text = f"P{idx} angle:{angle_deg:.1f} deg | sim:{sim:.0f}%"
                 else:
@@ -195,21 +203,20 @@ class PoseMatchProcessor(VideoProcessorBase):
                     cv2.LINE_AA,
                 )
 
-                # ----- 이 얼굴용 유사도 바 (박스 아래) -----
+                # 얼굴 아래 개인 유사도 바
                 if sim is not None:
                     bar_x1 = bx
                     bar_y1 = by + bh + 10
                     bar_x2 = bx + bw
                     bar_y2 = bar_y1 + 10
 
-                    # 화면 밖으로 나가지 않게 클램핑
+                    # 화면 밖으로 안 나가게 클램핑
                     bar_x1 = max(0, min(bar_x1, w - 1))
                     bar_x2 = max(0, min(bar_x2, w - 1))
                     bar_y1 = max(0, min(bar_y1, h - 1))
                     bar_y2 = max(0, min(bar_y2, h - 1))
 
                     if bar_x2 > bar_x1 and bar_y2 > bar_y1:
-                        # 배경
                         cv2.rectangle(
                             img,
                             (bar_x1, bar_y1),
@@ -227,11 +234,11 @@ class PoseMatchProcessor(VideoProcessorBase):
                             -1,
                         )
 
-                # 캡처용 후보
+                # 캡처 후보
                 if sim is not None:
                     faces_for_capture.append(sim)
 
-            # ---- 자동 캡처: 여러 명 중 하나라도 기준 이상이면 ----
+            # 4) 여러 명 중 하나라도 유사도 기준 넘으면 자동 캡처
             if self.ref_angle is not None and faces_for_capture:
                 max_sim = max(faces_for_capture)
                 now = time.time()
@@ -275,7 +282,7 @@ class PoseMatchProcessor(VideoProcessorBase):
 
 
 def main():
-    st.title("타겟 포즈 유사도 기반 자동 촬영 (여러 명 지원)")
+    st.title("타겟 포즈 유사도 기반 자동 촬영 (여러 명 + 전면/후면 지원)")
 
     st.markdown(
         """
@@ -283,7 +290,8 @@ def main():
         2. 웹캠을 켜면 실시간으로 **화면 속 여러 사람**의 각도를 각각 계산해서,  
            **각도 차이가 설정값 이하**가 되면 자동으로 사진을 캡처합니다.  
         3. 사람은 이미지 **왼쪽에 있는 사람부터 P1, P2, ...** 순서로 번호가 붙고,  
-           각 사람 아래에 **개별 유사도 바**가 표시됩니다.
+           각 사람 아래에 **개별 유사도 바**가 표시됩니다.  
+        4. 모바일에서 전면/후면 카메라를 선택해서 사용할 수 있습니다.
         """
     )
 
@@ -340,11 +348,36 @@ def main():
 
     st.subheader("웹캠")
 
+    # 전면 / 후면 카메라 선택 (모바일에서 유효)
+    cam_mode = st.radio(
+        "카메라 선택",
+        ["전면", "후면"],
+        horizontal=True,
+    )
+
+    if cam_mode == "전면":
+        video_constraints = {
+            "width": {"ideal": 640},
+            "height": {"ideal": 480},
+            "frameRate": {"ideal": 15},
+            "facingMode": {"ideal": "user"},
+        }
+    else:  # 후면
+        video_constraints = {
+            "width": {"ideal": 640},
+            "height": {"ideal": 480},
+            "frameRate": {"ideal": 15},
+            "facingMode": {"ideal": "environment"},
+        }
+
     webrtc_ctx = webrtc_streamer(
         key="pose-match-capture-multi",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=rtc_config,
-        media_stream_constraints={"video": True, "audio": False},
+        media_stream_constraints={
+            "video": video_constraints,
+            "audio": False,
+        },
         video_processor_factory=PoseMatchProcessor,
         async_processing=True,
     )
@@ -377,6 +410,8 @@ def main():
                         )
 
         st.subheader("자동 촬영된 사진들")
+        refresh = st.button("캡처 목록 새로고침")
+
         if vp.captured_images:
             for idx, img in enumerate(reversed(vp.captured_images), start=1):
                 st.image(img, channels="BGR", caption=f"캡처 #{idx}")

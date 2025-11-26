@@ -430,6 +430,17 @@ def main():
         if vp.captured_images:
             for idx, img in enumerate(reversed(vp.captured_images), start=1):
                 st.image(img, channels="BGR", caption=f"캡처 #{idx}")
+
+                # 🔽 여기서 개별 다운로드 버튼 추가
+                success, buf = cv2.imencode(".jpg", img)
+                if success:
+                    st.download_button(
+                        label=f"이 사진 다운로드 #{idx}",
+                        data=buf.tobytes(),
+                        file_name=f"capture_{idx}.jpg",
+                        mime="image/jpeg",
+                        key=f"download_{idx}",
+                    )
         else:
             st.write("아직 캡처된 사진이 없습니다. 타겟 각도와 비슷하게 맞춰보세요.")
 

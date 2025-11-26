@@ -79,7 +79,7 @@ class PoseMatchProcessor(VideoProcessorBase):
       - 여러 사람의 얼굴 roll angle 계산
       - 타겟 각도와 비교해 사람별 유사도 계산
       - 사람별 유사도 바 표시
-      - 조건 만족시 자동 캡처 (최근 10장 저장)
+      - 조건 만족시 자동 캡처 (최근 10장 저장, 캡처 사진에는 UI 없음)
     """
 
     def __init__(self):
@@ -93,7 +93,7 @@ class PoseMatchProcessor(VideoProcessorBase):
         # [{"id":1, "angle":..., "sim":...}, ...]
         self.person_infos = []
 
-        # 자동 캡처된 이미지들
+        # 자동 캡처된 이미지들 (UI 없는 원본)
         self.captured_images = []
 
         # FaceDetection은 한 번만 생성 (성능)
@@ -104,6 +104,10 @@ class PoseMatchProcessor(VideoProcessorBase):
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
+
+        # 🔹 UI가 없는 원본 프레임 (캡처용)
+        raw_img = img.copy()
+
         h, w, _ = img.shape
 
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -244,10 +248,13 @@ class PoseMatchProcessor(VideoProcessorBase):
                 now = time.time()
                 if max_sim >= 90.0 and now - self.last_capture_time > self.cooldown_sec:
                     self.last_capture_time = now
-                    self.captured_images.append(img.copy())
+
+                    # ✅ UI 없는 원본(raw_img)을 저장
+                    self.captured_images.append(raw_img.copy())
                     if len(self.captured_images) > 10:
                         self.captured_images.pop(0)
 
+                    # 화면에만 CAPTURED! 텍스트 표시
                     cv2.putText(
                         img,
                         "CAPTURED!",
@@ -291,7 +298,8 @@ def main():
            **각도 차이가 설정값 이하**가 되면 자동으로 사진을 캡처합니다.  
         3. 사람은 이미지 **왼쪽에 있는 사람부터 P1, P2, ...** 순서로 번호가 붙고,  
            각 사람 아래에 **개별 유사도 바**가 표시됩니다.  
-        4. 모바일에서 전면/후면 카메라를 선택해서 사용할 수 있습니다.
+        4. 모바일에서 전면/후면 카메라를 선택해서 사용할 수 있습니다.  
+        5. 캡처된 결과물에는 **UI가 전혀 없는 깨끗한 사진만** 남습니다.
         """
     )
 

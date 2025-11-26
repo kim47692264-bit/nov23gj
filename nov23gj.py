@@ -83,7 +83,7 @@ class PoseMatchProcessor(VideoProcessorBase):
     """
 
     def __init__(self):
-        # streamlit-webrtc 프레임 포맷 고정 (초록색 깨짐 방지)
+        # streamlit-webrtc 프레임 포맷 고정 (artifact 줄이기용)
         self._frame_format = "bgr24"
 
         # 타겟 각도 & 조건
@@ -395,7 +395,6 @@ def main():
         },
         video_processor_factory=PoseMatchProcessor,
         async_processing=True,
-        preferred_codec="VP8",  # 코덱을 VP8로 고정 (모바일에서 artifact 줄이기)
     )
 
     if webrtc_ctx.video_processor:
